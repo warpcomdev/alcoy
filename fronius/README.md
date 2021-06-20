@@ -637,10 +637,12 @@ La API Push permite programar periódicamente hasta 10 de estos informes, para q
 
 Al igual que en el punto anterior, de esta API nos centramos en informes relacionados con los dispositivos descubiertos en la cuenta del cliente:
 
-- El informe CurrentData - Inverter es equivalente a realizar una query [InverterRealTimeData](#inverterrealtimedata) con scope `system`.
-- El informe CurrentData - Meter es equivalente a una query [MeterRealTimeData](#meterrealtimedata) con scope `system`.
-- El informe CurrentData - Storage es equivalente a una query [StorageRealTimeData](#storagerealtimedata) con scope `system`.
-- El informe CurrentData - PowerFlow es equivalente a una query [Archive](#archive) con scope `system` y devices `Inverter+SensorCard+Meter`.
+**NOTA**: Aunque no se incluyen en el listado anterior de formatos soportados, la documentació del servicio push menciona otras queries, por lo que no está claro si se pueden usar o no. Vamos a considerar que se pueden usar todas las queries que se describen en la documentación, y de estas analizar inicialmente:
+
+- El informe CurrentData - Inverter, equivalente a realizar una query [InverterRealTimeData](#inverterrealtimedata) con scope `system`.
+- El informe CurrentData - Meter, equivalente a una query [MeterRealTimeData](#meterrealtimedata) con scope `system`.
+- El informe CurrentData - Storage, equivalente a una query [StorageRealTimeData](#storagerealtimedata) con scope `system`.
+- El informe CurrentData - PowerFlow, equivalente a una query [Archive](#archive) con scope `system` y devices `Inverter+SensorCard+Meter`.
 
 ### Resumen
 
