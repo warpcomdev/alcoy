@@ -20,7 +20,7 @@ Para la integración de Fronius se han considerado tres APIs.
 
 ![coste API web por datapoint](img/billing_metrics.png)
 
-### Dispositos
+### Dispositivos
 
 La API puede reportar información en tiempo real (`flowdata`), histórica en intervalos de 5 minutos (`histdata`), y agregada en intervalos diarios, semanales, mensuales o anuales (`aggrdata`), a los siguientes niveles:
 
@@ -231,7 +231,7 @@ Estos son valores calculados que podrían omitirse o calcularse en la plataforma
 
 Como resumen, esta tabla recopila los `channels` (métricas) que expone esta API en función del dispositivo y la diferencia entre tiempo real e histórico.
 
-**NOTA**: Las unidades se han extraído de la API con las credenciales del cliente. Los canales que no tienen unidades (`C-)`, es porque no aparecen en la API para el proyecto del cliente, por lo que quizá que no están disponibles en el proyecto del cliente.
+**NOTA**: Las unidades se han extraído de la API con las credenciales del cliente. Los canales que no tienen unidades (`(-)`, es porque no aparecen en la API para el proyecto del cliente, por lo que quizá que no están disponibles en el proyecto del cliente.
 
 | Device | Realtime channels (bajo demanda) | Historical channels (cada 5 mins) |
 | ------ | -------------------------------- | --------------------------------- |
@@ -295,11 +295,11 @@ Como resumen, esta tabla recopila los `channels` (métricas) que expone esta API
 | SmartMeter | | ExtEnergyExported (-) |
 | SmartMeter | | ExtEnergyExportedAbs (-) |
 
-Aplicando los costes de la API Web, si leyéramos todos los datos una vez al día, el consumo diarío sería:
+Aplicando los costes de la API Web, sólo considerando datos históricos (sin consultar los datapoints en tiempo real). si leyéramos todos los datos una vez al día, el consumo diarío sería:
 
-PV System: 12 datapoints => 11 * 12 * 24 = 3168 creditos por PV y día.
-Inverter: 18 datapoints * 12 * 24 = 5184 créditos por inverter y día.
-SmartMeter: 13 datapoints * 12 * 24 = 3744 créditos por smartmeter y día.
+PV System: 12 datapoints => 11 * (60/5) * 24 = 3168 creditos por PV y día.
+Inverter: 18 datapoints * (60/5) * 24 = 5184 créditos por inverter y día.
+SmartMeter: 13 datapoints * (60/5) * 24 = 3744 créditos por smartmeter y día.
 
 El sistema del cliente tiene actualmente 17 pvsystems con 18 inverters y 12 meters => 17 * 3168 + 18 * 5184 + 12 * 3744 => aprox. 200k créditos por día => **aprox. 6M créditos / mes**, lo que lo clasificaría como un sistema **Medium** según la tabla de costes de Fronius.
 
@@ -331,14 +331,14 @@ La API permite dos tipos de consulta: tiempo real y archivo (histórico). El arc
 
 ![Solar API devices](img/solarapi_devices.png)
 
-Dentro de estas queries, las *Info* son de inventario, no son para obtener datos. Y las de `Sensor` y `OhmPilot` se refieren a un dispositivo que no se ha descubierto en la instalación del cliente. Por lo que a efectos de integración de datos, nos centraremos en:
+Dentro de estas queries, las *Info* son de inventario, y las de `Sensor` y `OhmPilot` se refieren a dispositivos que no se ha descubierto en la instalación del cliente. Así que inicialmente, a efectos de integración de datos, nos centraremos en:
 
 - GetInverterRealTimeData
 - GetMeterRealTimeData
 - GetStorageRealTimeData
 - GetPowerFlowRealTimeData
 
-Las Archive Requests para esos mismos dispositivos.
+Estas queries son también las mismas que están disponibles para la API PUSH.
 
 ### InverterRealTimeData
 
@@ -612,6 +612,10 @@ No es obvio establecer una correspondencia inmediata entre estos canales y los c
 
 ### Pros y cons
 
+Esta API es equivalente a programar la ejecución periódica de una query de la API web. El DataLogger ejecuta periódicamente esa query y la envía al receptor de los mensajes push
+
+Por lo tanto, hereda casi todas las caracterísitcas y los contras de la API Solar v1, con algunas limitaciones propias:
+
   - Pros:
 
     - No tiene coste.
@@ -620,12 +624,10 @@ No es obvio establecer una correspondencia inmediata entre estos canales y los c
   - Cons:
 
     - La integración no puede ser por ETL, tiene que ser un servidor siempre disponible y alcanzable desde los dataloggers (posiblemente IP pública).
-    - Esta API es equivalente a programar la ejecución periódica de una query de la API web (el DataLogger ejecuta periódicamente esa query y la envía al receptor de los mensajes push). Por lo tanto, hereda los cons de la API Solar v1, y añade algunas limitaciones propias:
-
-      - Las queries que se pueden programar están predefinidas, son un subconjunto de lo que puede obtenerse de la API Web.
-      - El número de queries distintas (informes) que se pueden enviar por push es limitado (10). De esos 10, algunos pueden estar ya ocupados para enviar los informes a la web de fronius.
-      - Algunas de las queries sólo pueden programarse con una cierta frecuencia máxima (30 minutos, o una hora).
-      - Aunque otras queries pueden programarse con una frecuencia tan baja como 10 segundos, en realidad la mayoría de los `channels` (métricas) sólo se actualizan a intervalos regulares, típicamente de 5 minutos.
+    - Las queries que se pueden programar están predefinidas, son un subconjunto de lo que puede obtenerse de la API Web.
+    - El número de queries distintas (informes) que se pueden enviar por push es limitado (10). De esos 10, algunos pueden estar ya ocupados para enviar los informes a la web de fronius.
+    - Algunas de las queries sólo pueden programarse con una cierta frecuencia máxima (30 minutos, o una hora).
+    - Aunque otras queries pueden programarse con una frecuencia tan baja como 10 segundos, en realidad la mayoría de los `channels` (métricas) sólo se actualizan a intervalos regulares, típicamente de 5 minutos.
 
 ![Solar API frequency](img/solarapi_channel_frequency.png)
 
