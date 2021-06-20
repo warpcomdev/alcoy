@@ -626,8 +626,6 @@ Por lo tanto, hereda casi todas las caracterísitcas y los contras de la API Sol
     - La integración no puede ser por ETL, tiene que ser un servidor siempre disponible y alcanzable desde los dataloggers (posiblemente IP pública).
     - Las queries que se pueden programar están predefinidas, son un subconjunto de lo que puede obtenerse de la API Web.
     - El número de queries distintas (informes) que se pueden enviar por push es limitado (10). De esos 10, algunos pueden estar ya ocupados para enviar los informes a la web de fronius.
-    - Algunas de las queries sólo pueden programarse con una cierta frecuencia máxima (30 minutos, o una hora).
-    - Aunque otras queries pueden programarse con una frecuencia tan baja como 10 segundos, en realidad la mayoría de los `channels` (métricas) sólo se actualizan a intervalos regulares, típicamente de 5 minutos.
 
 ![Solar API frequency](img/solarapi_channel_frequency.png)
 
