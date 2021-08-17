@@ -1,0 +1,10 @@
+api-url = http://api.urbiotica.net
+api-organism = orgXXXXX
+api-username = warpcom_user
+api-password = XXXXXX
+keystone-url = https://auth.iotplatform.telefonica.com:15001
+orion-url = https://cb.iotplatform.telefonica.com:10027
+orion-username = alcoi_int_admin
+orion-password = XXXXXX
+orion-service = sc_alcoi_int
+orion-subservice = /aparcamiento

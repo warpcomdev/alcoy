@@ -13,7 +13,7 @@ import sys
 import traceback
 
 import attr
-from dotenv import dotenv_values
+import configargparse
 from limiter import Limiter, get_limiter, limit_rate
 from shapely.geometry import Polygon
 from orion import Session, ContextBroker
@@ -40,40 +40,32 @@ class Api:
         bucket = get_limiter(rate=100.0 / 60.0, capacity=100)
         with limit_rate(bucket):
             auth = session.get(
-                f'{endpoint}/auth/{organism}/{username}/{password}')
-        if auth.status_code != 200:
-            raise ValueError('Invalid username of password')
+                f'{endpoint}/v2/auth/{organism}/{username}/{password}')
+        if auth is None:
+            raise ValueError('Invalid auth endpoint')
         return cls(endpoint, organism, auth.text.strip('"'), bucket)
 
     def projects(self, session: Session) -> Dict[str, 'Project']:
         """projects associated to the logged-in user"""
-        url = f'{self.endpoint}/organisms/{self.organism}/projects'
+        url = f'{self.endpoint}/v2/organisms/{self.organism}/projects'
         with limit_rate(self.bucket):
             prj = session.get(url, headers={'IDENTITY_KEY': self.token})
-        if prj.status_code != 200:
-            raise ValueError(
-                f'Failed to retrieve projects for organism {self.organism}')
+        if prj is None:
+            raise ValueError("Invalid projects endpoint")
         return {
             item['projectid']: Project.new(self, item)
             for item in prj.json()
         }
 
     # pylint: disable=too-many-arguments
-    def query_project(self,
-                      session: Session,
-                      projectid: str,
-                      path: str,
-                      attrib: str,
-                      debug=False) -> JsonDict:
+    def query_project(self, session: Session, projectid: str, path: str,
+                      attrib: str) -> JsonDict:
         """query some sub-path for a particular project, use attrib as key in returned dict"""
-        url = f'{self.endpoint}/organisms/{self.organism}/projects/{projectid}/{path}'
+        url = f'{self.endpoint}/v2/organisms/{self.organism}/projects/{projectid}/{path}'
         with limit_rate(self.bucket):
             its = session.get(url, headers={'IDENTITY_KEY': self.token})
-        if its.status_code != 200:
-            raise ValueError(
-                f'Failed to retrieve {path} for project {projectid}')
-        if debug:
-            print("JSON: ", its.json())
+        if its is None:
+            raise ValueError("Invalid query endpoint")
         return {item[attrib]: item for item in its.json()}
 
 
@@ -133,7 +125,7 @@ class Project:
                  to_dt: datetime) -> JsonList:
         """Enumerate stop vehicle events"""
         from_ts = math.floor(from_dt.timestamp())
-        to_ts = math.ceil(to_dt.timestamp()) + 1
+        to_ts = math.ceil(to_dt.timestamp())
         poms = self.api.query_project(
             session, self.projectid,
             f'spots/{pomid}/phenomenons/vehicle_ctrl?start={from_ts}&end={to_ts}',
@@ -338,33 +330,75 @@ def rotate(
 # pylint: disable=too-many-locals
 def main():
     """Main ETL function"""
-    env = dotenv_values("urbiotica.env")
-    api_endpoint = "http://api.urbiotica.net/v2"
-    api_organism = env['ORGANISM']
-    api_username = env['USERNAME']
-    api_password = env['PASSWORD']
-    keystone_url = env["KEYSTONE_URL"]
-    orion_url = env["ORION_URL"]
-    orion_service = env["ORION_SERVICE"]
-    orion_subservice = env["ORION_SUBSERVICE"]
-    orion_username = env["ORION_USERNAME"]
-    orion_password = env["ORION_PASSWORD"]
+    parser = configargparse.ArgParser(default_config_files=['urbiotica.ini'])
+    parser.add('-c',
+               '--config',
+               required=False,
+               is_config_file=True,
+               env_var='CONFIG_FILE',
+               help='config file path')
+    parser.add('--api-url',
+               required=False,
+               help='Urbiotica API URL',
+               env_var='API_URL',
+               default='http://api.urbiotica.net')
+    parser.add('--api-organism',
+               required=True,
+               help='Organism ID for urbiotica API',
+               env_var='API_ORGANISM')
+    parser.add('--api-username',
+               required=True,
+               help='Username for urbiotica API',
+               env_var='API_USERNAME')
+    parser.add('--api-password',
+               required=True,
+               help='Password for urbiotica API',
+               env_var='API_PASSWORD')
+    parser.add('--keystone-url',
+               required=False,
+               help='Keystone URL',
+               env_var='KEYSTONE_URL',
+               default="https://auth.iotplatform.telefonica.com:15001")
+    parser.add('--orion-url',
+               required=False,
+               help='Orion URL',
+               env_var='ORION_URL',
+               default="https://cb.iotplatform.telefonica.com:10027")
+    parser.add('--orion-service',
+               required=True,
+               help='Orion service name',
+               env_var="ORION_SERVICE")
+    parser.add('--orion-subservice',
+               required=True,
+               help='Orion subservice name',
+               env_var="ORION_SUBSERVICE")
+    parser.add('--orion-username',
+               required=True,
+               help='Orion username',
+               env_var="ORION_USERNAME")
+    parser.add('--orion-password',
+               required=True,
+               help='Orion password',
+               env_var="ORION_PASSWORD")
+    options = parser.parse_args()
 
     session = Session()
     logging.info("Authenticating to url %s, service %s, username %s",
-                 keystone_url, orion_service, orion_username)
-    orion_cb = ContextBroker(keystoneURL=keystone_url,
-                             orionURL=orion_url,
-                             service=orion_service,
-                             subservice=orion_subservice)
-    orion_cb.auth(session, orion_username, orion_password)
+                 options.keystone_url, options.orion_service,
+                 options.orion_username)
+    orion_cb = ContextBroker(keystoneURL=options.keystone_url,
+                             orionURL=options.orion_url,
+                             service=options.orion_service,
+                             subservice=options.orion_subservice)
+    orion_cb.auth(session, options.orion_username, options.orion_password)
+    api = Api.login(session, options.api_url, options.api_organism,
+                    options.api_username, options.api_password)
 
-    api = Api.login(session, api_endpoint, api_organism, api_username,
-                    api_password)
     all_zones = dict()
     poms_by_zone = defaultdict(list)
     pom_params = list()
     now_ts = datetime.now()
+
     for project in api.projects(session).values():
         zones = project.zones(session)
         all_zones.update(zones)
@@ -384,7 +418,6 @@ def main():
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         iterators = pool.map(lambda p: SpotIterator.collect(**p), pom_params)
-
     # Use rotate to improve batching (batches cannot include the same entity twice)
     orion_cb.batch(session, rotate(iterators))
 
