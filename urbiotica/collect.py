@@ -123,7 +123,7 @@ class Project:
 
     def vehicles(self, session: Session, pomid: str, from_dt: datetime,
                  to_dt: datetime) -> JsonList:
-        """Enumerate stop vehicle events"""
+        """Enumerate spot vehicle_ctrl events"""
         from_ts = math.floor(from_dt.timestamp())
         to_ts = math.ceil(to_dt.timestamp())
         poms = self.api.query_project(

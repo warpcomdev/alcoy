@@ -1,6 +1,18 @@
 # Urbiotica ETL
 
 This ETL collects information from Urbiotica API to update ParkingSpot entities in Thinking Cities platform.
+~
+## Installation
+
+This script requires python3 3.7 or higher, and depends on several libraries that are enumerated in the [requirements.txt](requirements.txt) file. It is recommended to create a `virtualenv` for the script, and install all the dependencies there:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+To run the script, make sure the virtualenv is activated, and run `collect.py` with the proper parameters or configuration file (see next section).
 
 ## Configuration
 
