@@ -1,0 +1,12 @@
+attr==0.3.1
+attrs==21.2.0
+certifi==2021.5.30
+charset-normalizer==2.0.4
+ConfigArgParse==1.5.2
+idna==3.2
+limiter==0.1.2
+orion @ git+https://github.com/warpcomdev/sentiment@b84248891ff8958377ee38dc900cafb9edb8b986#subdirectory=libs/orion
+requests==2.26.0
+Shapely==1.7.1
+token-bucket==0.2.0
+urllib3==1.26.6
