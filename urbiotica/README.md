@@ -62,4 +62,4 @@ This is the mapping between Urbiotica's spot and phenomenon attributes, and `Par
 
   - `value: '0'` is mapped to `occupied: 0`, `status: 'free'`
   - `value: '1'` is mapped to `occupied: 1`, `status: 'occupied'`
-  - `value: '-1'` is mapped to `occupied: -1`, `status: 'unknown'`
+  - `value: '-1'` is mapped to `occupied: null`, `status: 'unknown'`

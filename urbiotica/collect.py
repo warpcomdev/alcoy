@@ -257,12 +257,12 @@ class SpotIterator:
                     },
                     'occupied': {
                         'type': 'Number',
-                        'value': occupied
+                        'value': occupied if occupied >= 0 else None
                     }
                 }
 
 
-def zone_to_entity(zone: JsonDict, zone_poms: JsonList):
+def zone_to_entity(zone: JsonDict, zone_poms: JsonList, timeinstant: str):
     """Turn Zone information into OnStreetParking entity"""
     zoneid = zone['zoneid']
     name = zone['description']
@@ -275,6 +275,10 @@ def zone_to_entity(zone: JsonDict, zone_poms: JsonList):
     return {
         'id': f'zoneid:{zoneid}',
         'type': 'OnStreetParking',
+        'TimeInstant': {
+            'type': 'DateTime',
+            'value': timeinstant
+        },
         'name': {
             'type': 'Text',
             'value': name
@@ -292,7 +296,7 @@ def zone_to_entity(zone: JsonDict, zone_poms: JsonList):
             'value': {
                 'type': 'Polygon',
                 # HACK: Urbo swaps latitude and longitude...
-                'coordinates': [[item[1], item[0]] for item in area]
+                'coordinates': [[[item[1], item[0]] for item in area]]
             }
         },
         'totalSpotNumber': {
@@ -422,9 +426,10 @@ def main():
     orion_cb.batch(session, rotate(iterators))
 
     #entities = list()
+    #timeinstant = datetime.utcnow().isoformat()
     #for zoneid, zone in all_zones.items():
     #    zone_poms = poms_by_zone[zoneid]
-    #    entities.append(zone_to_entity(zone, zone_poms))
+    #    entities.append(zone_to_entity(zone, zone_poms, timeinstant))
     #orion_cb.batch(session, entities)
 
 
