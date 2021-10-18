@@ -126,10 +126,21 @@ class Project:
         """Enumerate spot vehicle_ctrl events"""
         from_ts = math.floor(from_dt.timestamp())
         to_ts = math.ceil(to_dt.timestamp())
-        poms = self.api.query_project(
-            session, self.projectid,
-            f'spots/{pomid}/phenomenons/vehicle_ctrl?start={from_ts}&end={to_ts}',
-            'pomid')
+        try:
+            poms = self.api.query_project(
+                session, self.projectid,
+                f'spots/{pomid}/phenomenons/vehicle_ctrl?start={from_ts}&end={to_ts}',
+                'pomid')
+        except FetchError as err:
+            logging.error("Failed to fetch vehicles data: %s", err)
+            try:
+                poms = self.api.query_project(
+                    session, self.projectid,
+                    f'spots/{pomid}/phenomenons/vehicle_ctrl?start={from_ts}&end={to_ts}',
+                    'pomid')
+            except FetchError as err:
+                logging.error("Retry failed, giving up on vehicles: %s", err)
+                return []
         measurements = list(
             itertools.chain(*(({
                 'pomid':
