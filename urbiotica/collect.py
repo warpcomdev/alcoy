@@ -15,6 +15,7 @@ import json
 
 import attr
 import configargparse
+import dateutil
 from limiter import Limiter, get_limiter, limit_rate
 from shapely.geometry import Polygon
 from orion import Session, ContextBroker
@@ -120,8 +121,8 @@ class Project:
         rotations = list(
             itertools.chain(*(({
                 'pomid': pom['pomid'],
-                'start': datetime.fromisoformat(item['start']),
-                'end': datetime.fromisoformat(item['end'])
+                'start': dateutil.parser.isoparse(item['start']),
+                'end': dateutil.parser.isoparse(item['end'])
             } for item in pom['rotations']) for pom in poms.values())))
         return Project._sortby(rotations, 'start')
 
@@ -209,8 +210,7 @@ class SpotIterator:
                               entityType="ParkingSpot")
         from_ts = to_ts - timedelta(days=1)
         if entity is not None and 'occupancyModified' in entity:
-            from_ts = datetime.fromisoformat(
-                entity['occupancyModified']['value'].replace('Z', '+00:00'))
+            from_ts = dateutil.parser.isoparse(entity['occupancyModified']['value'])
         logging.info('Getting events for pomid %d between %s and %s', pomid,
                      from_ts, to_ts)
         events = project.vehicles(session, pomid, from_ts, to_ts)
