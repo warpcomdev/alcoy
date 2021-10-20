@@ -424,7 +424,12 @@ def main():
         for zoneid in zones.keys():
             devices.update(project.devices(session, zoneid))
         for pom in project.spots(session).values():
-            poms_by_zone[devices[pom['elementid']]['zoneid']].append(pom)
+            # Some projects have POMs without element IDs, probably errors.
+            elementid = pom.get('elementid', '')
+            if elementid == '':
+                logging.warn("Found POM without ElementID: %s", json.dumps(pom))
+                continue
+            poms_by_zone[devices[elementid]['zoneid']].append(pom)
             pom_params.append({
                 'session': session,
                 'project': project,
