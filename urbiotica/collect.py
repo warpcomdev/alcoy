@@ -399,6 +399,13 @@ def main():
                required=True,
                help='Orion password',
                env_var="ORION_PASSWORD")
+    parser.add('--load-zones',
+                required=False,
+                help='load zones (OnStreetParkings) besides POMs (ParkingSpots)',
+                dest='load_zones',
+                action='store_true',
+                default=False,
+                env_var="LOAD_ZONES")
     options = parser.parse_args()
 
     session = Session()
@@ -445,12 +452,15 @@ def main():
     # Use rotate to improve batching (batches cannot include the same entity twice)
     orion_cb.batch(session, rotate(iterators))
 
-    #entities = list()
-    #timeinstant = datetime.utcnow().isoformat()
-    #for zoneid, zone in all_zones.items():
-    #    zone_poms = poms_by_zone[zoneid]
-    #    entities.append(zone_to_entity(zone, zone_poms, timeinstant))
-    #orion_cb.batch(session, entities)
+    if options.load_zones:
+        logging.info("Loading zones")
+        entities = list()
+        timeinstant = datetime.utcnow().isoformat()
+        for zoneid, zone in all_zones.items():
+            zone_poms = poms_by_zone[zoneid]
+            entities.append(zone_to_entity(zone, zone_poms, timeinstant))
+        orion_cb.batch(session, entities)
+
 
 
 if __name__ == "__main__":
