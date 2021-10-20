@@ -43,6 +43,7 @@ class Api:
                 f'{endpoint}/v2/auth/{organism}/{username}/{password}')
         if auth is None:
             raise ValueError('Invalid auth endpoint')
+        logging.info("Authentication successful")
         return cls(endpoint, organism, auth.text.strip('"'), bucket)
 
     def projects(self, session: Session) -> Dict[str, 'Project']:
@@ -52,6 +53,7 @@ class Api:
             prj = session.get(url, headers={'IDENTITY_KEY': self.token})
         if prj is None:
             raise ValueError("Invalid projects endpoint")
+        logging.debug("Received project list: %s", prj.text)
         return {
             item['projectid']: Project.new(self, item)
             for item in prj.json()
@@ -66,6 +68,7 @@ class Api:
             its = session.get(url, headers={'IDENTITY_KEY': self.token})
         if its is None:
             raise ValueError("Invalid query endpoint")
+        logging.debug("Received %s info for project %s: %s", path, projectid, its.text)
         return {item[attrib]: item for item in its.json()}
 
 
