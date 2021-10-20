@@ -15,7 +15,7 @@ import json
 
 import attr
 import configargparse
-import dateutil
+from dateutil import parser
 from limiter import Limiter, get_limiter, limit_rate
 from shapely.geometry import Polygon
 from orion import Session, ContextBroker
@@ -121,8 +121,8 @@ class Project:
         rotations = list(
             itertools.chain(*(({
                 'pomid': pom['pomid'],
-                'start': dateutil.parser.isoparse(item['start']),
-                'end': dateutil.parser.isoparse(item['end'])
+                'start': parser.isoparse(item['start']),
+                'end': parser.isoparse(item['end'])
             } for item in pom['rotations']) for pom in poms.values())))
         return Project._sortby(rotations, 'start')
 
@@ -210,7 +210,7 @@ class SpotIterator:
                               entityType="ParkingSpot")
         from_ts = to_ts - timedelta(days=1)
         if entity is not None and 'occupancyModified' in entity:
-            from_ts = dateutil.parser.isoparse(entity['occupancyModified']['value'])
+            from_ts = parser.isoparse(entity['occupancyModified']['value'])
         logging.info('Getting events for pomid %d between %s and %s', pomid,
                      from_ts, to_ts)
         events = project.vehicles(session, pomid, from_ts, to_ts)
@@ -349,64 +349,64 @@ def rotate(
 # pylint: disable=too-many-locals
 def main():
     """Main ETL function"""
-    parser = configargparse.ArgParser(default_config_files=['urbiotica.ini'])
-    parser.add('-c',
+    argparser = configargparse.ArgParser(default_config_files=['urbiotica.ini'])
+    argparser.add('-c',
                '--config',
                required=False,
                is_config_file=True,
                env_var='CONFIG_FILE',
                help='config file path')
-    parser.add('--api-url',
+    argparser.add('--api-url',
                required=False,
                help='Urbiotica API URL',
                env_var='API_URL',
                default='http://api.urbiotica.net')
-    parser.add('--api-organism',
+    argparser.add('--api-organism',
                required=True,
                help='Organism ID for urbiotica API',
                env_var='API_ORGANISM')
-    parser.add('--api-username',
+    argparser.add('--api-username',
                required=True,
                help='Username for urbiotica API',
                env_var='API_USERNAME')
-    parser.add('--api-password',
+    argparser.add('--api-password',
                required=True,
                help='Password for urbiotica API',
                env_var='API_PASSWORD')
-    parser.add('--keystone-url',
+    argparser.add('--keystone-url',
                required=False,
                help='Keystone URL',
                env_var='KEYSTONE_URL',
                default="https://auth.iotplatform.telefonica.com:15001")
-    parser.add('--orion-url',
+    argparser.add('--orion-url',
                required=False,
                help='Orion URL',
                env_var='ORION_URL',
                default="https://cb.iotplatform.telefonica.com:10027")
-    parser.add('--orion-service',
+    argparser.add('--orion-service',
                required=True,
                help='Orion service name',
                env_var="ORION_SERVICE")
-    parser.add('--orion-subservice',
+    argparser.add('--orion-subservice',
                required=True,
                help='Orion subservice name',
                env_var="ORION_SUBSERVICE")
-    parser.add('--orion-username',
+    argparser.add('--orion-username',
                required=True,
                help='Orion username',
                env_var="ORION_USERNAME")
-    parser.add('--orion-password',
+    argparser.add('--orion-password',
                required=True,
                help='Orion password',
                env_var="ORION_PASSWORD")
-    parser.add('--load-zones',
+    argparser.add('--load-zones',
                 required=False,
                 help='load zones (OnStreetParkings) besides POMs (ParkingSpots)',
                 dest='load_zones',
                 action='store_true',
                 default=False,
                 env_var="LOAD_ZONES")
-    options = parser.parse_args()
+    options = argparser.parse_args()
 
     session = Session()
     logging.info("Authenticating to url %s, service %s, username %s",
