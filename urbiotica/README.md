@@ -29,6 +29,8 @@ The ETL uses the following configuration variables, that can be passwd in either
 - `--orion-subservice` (env `ORION_SUBSERVICE`): Orion subservice name
 - `--orion-username` (env `ORION_USERNAME`): Orion username
 - `--orion-password` (env `ORION_PASSWORD`): Orion password
+- `--orion-retries` (env `ORION_RETRIES`): Number of retries for orion updates
+- `--orion-sleep` (env `ORION_SLEEP`): Time to wait between batch updates
 - `--load-zones` (env: `LOAD_ZONES`): Enable updating zones (OnStreetParkings) besides POMs (ParkingSpots)
 
 Example of `.ini` config file in [urbiotica.ini.sample](urbiotica.ini.sample)

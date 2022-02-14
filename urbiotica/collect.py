@@ -1,30 +1,267 @@
 #!/usr/bin/env python
+# pylint: disable=line-too-long
 """Load ParkingSpot data from Urbiotica API"""
 
-from datetime import datetime, timedelta, timezone
-from operator import itemgetter
-from typing import Dict, Any, List, Generator, Iterable, Iterator, Optional
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 import itertools
 import math
 import logging
 import sys
 import traceback
 import json
+import time
 
-import attr
-import configargparse
-from dateutil import parser
-from limiter import Limiter, get_limiter, limit_rate
-from shapely.geometry import Polygon
-from orion import Session, ContextBroker
+from datetime import datetime, timedelta, timezone
+from operator import itemgetter
+from typing import Dict, Any, List, Generator, Optional, Protocol, Sequence
+from collections import defaultdict
+from dataclasses import dataclass
+
+import requests
+import urllib3 # type: ignore
+import configargparse # type: ignore
+
+from dateutil import parser # type: ignore
+from limiter import Limiter, get_limiter, limit_rate # type: ignore
+from shapely.geometry import Polygon # type: ignore
+
+
+# -------------------
+# Orion-related stuff
+# -------------------
+
+class Store(Protocol):
+    """Store represents any persistence backend"""
+    def open(self):
+        """Ready the store for saving data"""
+    def send_batch(self, subservice: str, entities: Sequence[Any]) -> None:
+        """Saves a batch of entities to the backend"""
+    def close(self):
+        """Closes the backend connection"""
+
+# pylint: disable=redefined-outer-name
+class Session(Protocol):
+    """Session represents a requests.Session"""
+    def get(self, url: str, headers: Optional[Dict[str, str]]=None, params: Optional[Dict[str, str]]=None, verify: Optional[bool]=None) -> requests.Response:
+        """Performs an http GET"""
+    def post(self, url: str, headers: Optional[Dict[str, str]]=None, json: Any=None, verify: Optional[bool]=None) -> requests.Response:
+        """Perform an HTTP POST"""
+
+
+# Define classes
+@dataclass(frozen=True)
+class CustomException(Exception):
+    """Exception raised for errors in the methods.
+
+    Attributes:
+        msg  -- explanation of the error
+    """
+    msg: str
+
+
+@dataclass(frozen=True)
+class NetworkException(Exception):
+    """Exception raised for network errors.
+
+    Attributes:
+        msg: the failure message
+        url -- URL the request was sent to
+        status_code -- response status code
+        text -- response body
+    """
+    msg: str
+    url: str
+    status_code: int
+    text: str
+
+
+# pylint: disable=too-many-instance-attributes,missing-function-docstring
+@dataclass
+class OrionStore:
+    """Orion-based store"""
+    endpoint_keystone: str
+    endpoint_cb: str
+    user: str
+    password: str
+    service: str
+    seconds_sleep: int
+    retries: int
+    session: Session
+    token: Dict[str, str]
+
+    def open(self):
+        """Open the store. For OrionStore, it's just a no-op"""
+
+    def close(self):
+        """Close the store. For OrionStore, it's a no-op"""
+
+    def get_auth_token_subservice(self, subservice: str):
+        """Get new authentication token from credentials"""
+        headers = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        }
+
+        body = {
+            "auth": {
+                "scope": {
+                    "project": {
+                        "domain": {
+                            "name": self.service
+                        },
+                        "name": subservice
+                    }
+                },
+                "identity": {
+                    "password": {
+                        "user": {
+                            "domain": {
+                                "name": self.service
+                            },
+                            "password": self.password,
+                            "name": self.user
+                        }
+                    },
+                    "methods": [
+                        "password"
+                    ]
+                }
+            }
+        }
+
+        logging.info('getting auth token (subservice "%s")...', subservice)
+        req_url = self.endpoint_keystone + '/v3/auth/tokens'
+        res = self.session.post(req_url, json=body, headers=headers, verify=False)
+
+        if res.status_code != 201:
+            logging.error('Failed to get auth token (subservice "%s") (%d) (%s)', subservice, res.status_code, res.text)
+            raise NetworkException(msg='Failed to get auth token', url=req_url, status_code=res.status_code, text=res.text)
+
+        self.token[subservice] = res.headers["X-Subject-Token"]
+        logging.info('Authentication token for subservice "%s" was created successfully', subservice)
+
+    def renew_token(self, subservice: str):
+        headers = {
+            'Content-Type': 'application/json'
+        }
+        body = {
+            "auth": {
+                "identity": {
+                    "methods": [
+                        "token"
+                    ],
+                    "token": {
+                        "id": self.token[subservice]
+                    }
+                }
+            }
+        }
+
+        logging.info('renewing token (subservice "%s")...', subservice)
+        req_url = self.endpoint_keystone + '/v3/auth/tokens'
+        res = self.session.post(req_url, json=body, headers=headers, verify=False)
+
+        if res.status_code != 201:
+            logging.error('Failed to renew token (subservice "%s") (%d) (%s)', subservice, res.status_code, res.text)
+            raise NetworkException(msg='Failed to renew toen', url=req_url, status_code=res.status_code, text=res.text)
+
+        self.token[subservice] = res.headers["X-Subject-Token"]
+        logging.info('Authentication token for subservice "%s" was renewed successfully', subservice)
+
+    def batch_url(self):
+        """URL for batch requests to orion"""
+        return self.endpoint_cb + '/v2/op/update'
+
+    def batch_creation_update(self, subservice: str, entities: Sequence[Any]):
+        """
+        Send a POST /v2/op/update batch
+        :param entities: the entities to be included in the batch (up to page_size, but construction)
+        :return: response
+        """
+        headers = {
+            'Fiware-Service': self.service,
+            'Fiware-ServicePath': subservice,
+            'X-Auth-Token': self.token[subservice],
+            'Content-Type': 'application/json'
+        }
+
+        body = {
+            'actionType': 'append',
+            'entities': entities
+        }
+
+        req_url = self.batch_url()
+        return self.session.post(req_url, json=body, headers=headers, verify=False)
+
+    def send_batch(self, subservice: str, entities: Sequence[Any]):
+        """
+        Send a POST /v2/op/update batch
+        :param entities: the entities to be included in the batch (up to page_size, but construction)
+        :return: True if update was ok, False otherwise
+        """
+        logging.info('Subservice: "%s", %d entities', subservice, len(entities))
+        if subservice not in self.token.keys():
+            self.get_auth_token_subservice(subservice)
+
+        done, retries = False, self.retries
+        while not done:
+            res = self.batch_creation_update(subservice, entities)
+            if res.status_code == 401:
+                self.renew_token(subservice)
+                res = self.batch_creation_update(subservice, entities)
+
+            if res.status_code == 204:
+                done = True
+            else:
+                logging.error('Error in batch operation (%d): %s', res.status_code, res.text)
+                if retries < 0:
+                    raise NetworkException(msg='Error in batch operation', url=self.batch_url(), status_code=res.status_code, text=res.text)
+                retries -= 1
+                time.sleep(self.seconds_sleep)
+
+        logging.info('Update batch of %d entities', len(entities))
+        time.sleep(self.seconds_sleep)
+
+    def get_url(self, entityid: str) -> str:
+        return self.endpoint_cb + '/v2/entities/' + entityid
+
+    def get_entity(self, subservice: str, entityid: str, entitytype: str) -> Any:
+        """Get an entity by ID and type"""
+        logging.info('GET entity %s subservice: "%s"', entityid, subservice)
+        if subservice not in self.token.keys():
+            self.get_auth_token_subservice(subservice)
+
+        req_url = self.get_url(entityid)
+        headers = {
+            'Fiware-Service': self.service,
+            'Fiware-ServicePath': subservice,
+            'X-Auth-Token': self.token[subservice]
+        }
+        params = {"type": entitytype}
+        retries = self.retries
+        while True:
+            res = self.session.get(req_url, headers=headers, params=params, verify=False)
+            if res.status_code == 401:
+                self.renew_token(subservice)
+                res = self.session.get(req_url, headers=headers, params=params, verify=False)
+
+            if res.status_code == 200:
+                return res.json()
+
+            logging.error('Error in get operation (%d): %s', res.status_code, res.text)
+            if retries < 0:
+                raise NetworkException(msg='Error in get operation', url=req_url, status_code=res.status_code, text=res.text)
+            retries -= 1
+            time.sleep(self.seconds_sleep)
+
+# ---------------
+# Urbiotica stuff
+# ---------------
 
 JsonDict = Dict[str, Any]
 JsonList = List[JsonDict]
 
 
-@attr.s(auto_attribs=True)
+@dataclass
 class Api:
     """Encapsulates top level API calls to urbiotica API"""
 
@@ -32,6 +269,7 @@ class Api:
     organism: str
     token: str
     bucket: Limiter
+    session: Session
 
     # pylint: disable=too-many-arguments
     @classmethod
@@ -46,13 +284,13 @@ class Api:
         if auth is None:
             raise ValueError('Invalid auth endpoint')
         logging.info("Authentication successful")
-        return cls(endpoint, organism, auth.text.strip('"'), bucket)
+        return cls(endpoint, organism, auth.text.strip('"'), bucket, session)
 
-    def projects(self, session: Session) -> Dict[str, 'Project']:
+    def projects(self) -> Dict[str, 'Project']:
         """projects associated to the logged-in user"""
         url = f'{self.endpoint}/v2/organisms/{self.organism}/projects'
         with limit_rate(self.bucket):
-            prj = session.get(url, headers={'IDENTITY_KEY': self.token})
+            prj = self.session.get(url, headers={'IDENTITY_KEY': self.token})
         if prj is None:
             raise ValueError("Invalid projects endpoint")
         logging.debug("Received project list: %s", prj.text)
@@ -62,19 +300,19 @@ class Api:
         }
 
     # pylint: disable=too-many-arguments
-    def query_project(self, session: Session, projectid: str, path: str,
+    def query_project(self, projectid: str, path: str,
                       attrib: str) -> JsonDict:
         """query some sub-path for a particular project, use attrib as key in returned dict"""
         url = f'{self.endpoint}/v2/organisms/{self.organism}/projects/{projectid}/{path}'
         with limit_rate(self.bucket):
-            its = session.get(url, headers={'IDENTITY_KEY': self.token})
+            its = self.session.get(url, headers={'IDENTITY_KEY': self.token})
         if its is None:
             raise ValueError("Invalid query endpoint")
         logging.debug("Received %s info for project %s: %s", path, projectid, its.text)
         return {item[attrib]: item for item in its.json()}
 
 
-@attr.s(auto_attribs=True)
+@dataclass
 class Project:
     """Encapsulates project API"""
 
@@ -85,38 +323,34 @@ class Project:
     timezone: str
 
     @classmethod
-    def new(cls, api: Api, project: JsonDict):
+    def new(cls, api: Api, project: JsonDict) -> 'Project':
         """New project from plain json project description"""
         return cls(api, project['projectid'], project['name'],
                    project['description'], project['timezone'])
 
-    def parkings(self, session: Session) -> JsonDict:
+    def parkings(self) -> JsonDict:
         """Enumerate project parkings"""
-        return self.api.query_project(session, self.projectid, 'parkings',
-                                      'pomid')
+        return self.api.query_project(self.projectid, 'parkings', 'pomid')
 
-    def zones(self, session: Session) -> JsonDict:
+    def zones(self) -> JsonDict:
         """Enumerate project zones"""
-        return self.api.query_project(session, self.projectid, 'zones',
-                                      'zoneid')
+        return self.api.query_project(self.projectid, 'zones', 'zoneid')
 
-    def spots(self, session: Session) -> JsonDict:
+    def spots(self) -> JsonDict:
         """Enumerate project spots"""
-        return self.api.query_project(session, self.projectid, 'spots',
-                                      'pomid')
+        return self.api.query_project(self.projectid, 'spots', 'pomid')
 
-    def devices(self, session: Session, zoneid: str) -> JsonDict:
+    def devices(self, zoneid: str) -> JsonDict:
         """Enumerate zone devices"""
-        return self.api.query_project(session, self.projectid,
-                                      f'zones/{zoneid}/devices', 'elementid')
+        return self.api.query_project(self.projectid, f'zones/{zoneid}/devices', 'elementid')
 
-    def rotations(self, session: Session, pomid: str, from_dt: datetime,
+    def rotations(self, pomid: str, from_dt: datetime,
                   to_dt: datetime) -> JsonList:
         """Enumerate spot rotations"""
         fromiso = datetime.isoformat(from_dt.replace(microsecond=0))
         toiso = datetime.isoformat(to_dt.replace(microsecond=0))
         poms = self.api.query_project(
-            session, self.projectid,
+            self.projectid,
             f'spots/{pomid}/rotations/finished/{fromiso}/{toiso}', 'pomid')
         rotations = list(
             itertools.chain(*(({
@@ -126,24 +360,26 @@ class Project:
             } for item in pom['rotations']) for pom in poms.values())))
         return Project._sortby(rotations, 'start')
 
-    def vehicles(self, session: Session, pomid: str, from_dt: datetime,
+    def vehicles(self, pomid: str, from_dt: datetime,
                  to_dt: datetime) -> JsonList:
         """Enumerate spot vehicle_ctrl events"""
         from_ts = math.floor(from_dt.timestamp())
         to_ts = math.ceil(to_dt.timestamp())
+        if to_ts - from_ts > 7*24*60*60:
+            to_ts = from_ts + 7*24*60*60
         try:
             poms = self.api.query_project(
-                session, self.projectid,
+                self.projectid,
                 f'spots/{pomid}/phenomenons/vehicle_ctrl?start={from_ts}&end={to_ts}',
                 'pomid')
-        except FetchError as err:
+        except requests.exceptions.RequestException as err:
             logging.error("Failed to fetch vehicles data: %s", err)
             try:
                 poms = self.api.query_project(
-                    session, self.projectid,
+                    self.projectid,
                     f'spots/{pomid}/phenomenons/vehicle_ctrl?start={from_ts}&end={to_ts}',
                     'pomid')
-            except FetchError as err:
+            except requests.exceptions.RequestException as err:
                 logging.error("Retry failed, giving up on vehicles: %s", err)
                 return []
         measurements = list(
@@ -165,7 +401,7 @@ class Project:
         return items
 
 
-@attr.s(auto_attribs=True)
+@dataclass
 class SpotIterator:
     """Read vehicle information from Spot and turn into ParkingSpot entity sequence"""
     # IDs of POM, device and zone
@@ -189,8 +425,8 @@ class SpotIterator:
 
     # pylint: disable=too-many-arguments,too-many-locals
     @classmethod
-    def collect(cls, session: Session, project: Project,
-                orion_cb: ContextBroker, pom: JsonDict, device: JsonDict,
+    def collect(cls, project: Project,
+                orion_cb: OrionStore, subservice: str, pom: JsonDict, device: JsonDict,
                 to_ts: datetime):
         """Collect vehicle_ctrl events for the given pomid between most recent update, and to_ts"""
         pomid = pom['pomid']
@@ -205,15 +441,13 @@ class SpotIterator:
         zoneentityid = f'zoneid:{zoneid}'
         logging.info('Getting latest occupancyModified for entity %s',
                      entityid)
-        entity = orion_cb.get(session,
-                              entityID=entityid,
-                              entityType="ParkingSpot")
+        entity = orion_cb.get_entity(subservice=subservice, entityid=entityid, entitytype="ParkingSpot")
         from_ts = to_ts - timedelta(days=1)
         if entity is not None and 'occupancyModified' in entity:
             from_ts = parser.isoparse(entity['occupancyModified']['value'])
         logging.info('Getting events for pomid %d between %s and %s', pomid,
                      from_ts, to_ts)
-        events = project.vehicles(session, pomid, from_ts, to_ts)
+        events = project.vehicles(pomid, from_ts, to_ts)
         return cls(pomid=pomid,
                    name=name,
                    deviceid=deviceid,
@@ -321,31 +555,6 @@ def zone_to_entity(zone: JsonDict, zone_poms: JsonList, timeinstant: str):
     }
 
 
-def rotate(
-        iterators: List[Iterable[JsonDict]]
-) -> Generator[JsonDict, None, None]:
-    """Rotate a set of iterators yielding one item from each"""
-    iterables: List[Optional[Iterator[JsonDict]]] = [
-        iter(item) for item in iterators
-    ]
-    while len(iterables) > 0:
-        depleted = False
-        for index, item in enumerate(iterables):
-            entity: Optional[JsonDict] = None
-            try:
-                if item is not None:
-                    entity = next(item)
-            except StopIteration:
-                iterables[index] = None
-                depleted = True
-            else:
-                if entity is not None:
-                    yield entity
-        if depleted:
-            depleted = False
-            iterables = [item for item in iterables if item is not None]
-
-
 # pylint: disable=too-many-locals
 def main():
     """Main ETL function"""
@@ -399,6 +608,19 @@ def main():
                required=True,
                help='Orion password',
                env_var="ORION_PASSWORD")
+    argparser.add('--orion-retries',
+               required=False,
+               default=0,
+               type=int,
+               choices=range(0, 6),
+               env_var="ORION_RETRIES")
+    argparser.add('--orion-sleep',
+               required=False,
+               default=1,
+               type=int,
+               choices=range(1, 100),
+               help='Orion sleep between batches',
+               env_var="ORION_SLEEP")
     argparser.add('--load-zones',
                 required=False,
                 help='load zones (OnStreetParkings) besides POMs (ParkingSpots)',
@@ -408,16 +630,22 @@ def main():
                 env_var="LOAD_ZONES")
     options = argparser.parse_args()
 
-    session = Session()
     logging.info("Authenticating to url %s, service %s, username %s",
                  options.keystone_url, options.orion_service,
                  options.orion_username)
-    orion_cb = ContextBroker(keystoneURL=options.keystone_url,
-                             orionURL=options.orion_url,
-                             service=options.orion_service,
-                             subservice=options.orion_subservice)
-    orion_cb.auth(session, options.orion_username, options.orion_password)
-    api = Api.login(session, options.api_url, options.api_organism,
+
+    orion_cb = OrionStore(
+        endpoint_keystone=options.keystone_url,
+        endpoint_cb=options.orion_url,
+        service=options.orion_service,
+        user=options.orion_username,
+        password=options.orion_password,
+        seconds_sleep=options.orion_sleep,
+        retries=options.orion_retries,
+        session=requests.Session(),
+        token=dict())
+    orion_cb.open()
+    api = Api.login(requests.Session(), options.api_url, options.api_organism,
                     options.api_username, options.api_password)
 
     all_zones = dict()
@@ -425,13 +653,13 @@ def main():
     pom_params = list()
     now_ts = datetime.now()
 
-    for project in api.projects(session).values():
-        zones = project.zones(session)
+    for project in api.projects().values():
+        zones = project.zones()
         all_zones.update(zones)
         devices = dict()
         for zoneid in zones.keys():
-            devices.update(project.devices(session, zoneid))
-        for pom in project.spots(session).values():
+            devices.update(project.devices(zoneid))
+        for pom in project.spots().values():
             # Some projects have POMs without element IDs, probably errors.
             elementid = pom.get('elementid', '')
             if elementid == '':
@@ -439,18 +667,20 @@ def main():
                 continue
             poms_by_zone[devices[elementid]['zoneid']].append(pom)
             pom_params.append({
-                'session': session,
                 'project': project,
                 'orion_cb': orion_cb,
+                'subservice': options.orion_subservice,
                 'pom': pom,
                 'device': devices[pom['elementid']],
                 'to_ts': now_ts,
             })
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        iterators = pool.map(lambda p: SpotIterator.collect(**p), pom_params)
-    # Use rotate to improve batching (batches cannot include the same entity twice)
-    orion_cb.batch(session, rotate(iterators))
+    batchSize = 20
+    for pom in pom_params:
+        entities = list(SpotIterator.collect(**pom))
+        for base in (0, len(entities), batchSize):
+            logging.info(f'sending batch {base} to {base+batchSize}')
+            orion_cb.send_batch(options.orion_subservice, entities[base:base+batchSize])
 
     if options.load_zones:
         logging.info("Loading zones")
@@ -459,17 +689,20 @@ def main():
         for zoneid, zone in all_zones.items():
             zone_poms = poms_by_zone[zoneid]
             entities.append(zone_to_entity(zone, zone_poms, timeinstant))
-        orion_cb.batch(session, entities)
+        orion_cb.send_batch(options.orion_subservice, entities)
 
 
 
 if __name__ == "__main__":
 
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(logging.DEBUG)
-    root.addHandler(handler)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler()
+        ]
+    )
 
     try:
         main()
@@ -478,3 +711,4 @@ if __name__ == "__main__":
     except Exception as err:
         print("ETL KO: ", err)
         traceback.print_exc()
+        sys.exit(-1)

@@ -2,3 +2,4 @@ store
 csv
 *.env
 *.ini
+venv
