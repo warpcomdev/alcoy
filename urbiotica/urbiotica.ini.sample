@@ -8,3 +8,5 @@ orion-username = alcoi_int_admin
 orion-password = XXXXXX
 orion-service = sc_alcoi_int
 orion-subservice = /aparcamiento
+orion-sleep = 5
+orion-retries = 1

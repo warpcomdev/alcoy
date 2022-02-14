@@ -678,7 +678,7 @@ def main():
     batchSize = 20
     for pom in pom_params:
         entities = list(SpotIterator.collect(**pom))
-        for base in (0, len(entities), batchSize):
+        for base in range(0, len(entities), batchSize):
             logging.info(f'sending batch {base} to {base+batchSize}')
             orion_cb.send_batch(options.orion_subservice, entities[base:base+batchSize])
 

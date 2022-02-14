@@ -4,7 +4,7 @@ This ETL collects information from Urbiotica API to update ParkingSpot entities 
 ~
 ## Installation
 
-This script requires python3 3.7 or higher, and depends on several libraries that are enumerated in the [requirements.txt](requirements.txt) file. It is recommended to create a `virtualenv` for the script, and install all the dependencies there:
+This script requires python3 3.8 or higher, and depends on several libraries that are enumerated in the [requirements.txt](requirements.txt) file. It is recommended to create a `virtualenv` for the script, and install all the dependencies there:
 
 ```bash
 python3 -m venv venv
